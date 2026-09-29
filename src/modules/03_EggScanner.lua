@@ -23,8 +23,6 @@ SaB.Scanner = Scanner
 
 local CONFIG  = SaB.CONFIG
 local Util    = SaB.Util
-local EggDB   = SaB.EggDB
-local Rarity  = SaB.Rarity
 
 Scanner.eggs   = {}    -- [obj] = record
 Scanner.roots  = {}    -- folders worth re-scanning often
@@ -112,11 +110,11 @@ function Scanner.classifyObject(obj)
     -- ---------------------------------------------------------------
     -- 1) collect the text this object tells us about itself
     -- ---------------------------------------------------------------
-    local entry   = EggDB.lookup(raw)
-    local nameHasEggWord = EggDB.isEggWord(raw)          -- "Egg_1"
-    local pathHasEggWord = EggDB.isEggWord(parents)      -- inside "Eggs"
-    local hasContainer   = EggDB.isContainerWord(parents)
-    local isLocation     = EggDB.isLocationWord(raw)     -- "GrassIsland"
+    local entry   = SaB.EggDB.lookup(raw)
+    local nameHasEggWord = SaB.EggDB.isEggWord(raw)          -- "Egg_1"
+    local pathHasEggWord = SaB.EggDB.isEggWord(parents)      -- inside "Eggs"
+    local hasContainer   = SaB.EggDB.isContainerWord(parents)
+    local isLocation     = SaB.EggDB.isLocationWord(raw)     -- "GrassIsland"
 
     -- an island / event area is a PLACE, not an egg - unless the game itself
     -- marks it as one (a database name or an IsEgg flag)
@@ -132,14 +130,14 @@ function Scanner.classifyObject(obj)
     end
 
     -- attributes that describe the egg
-    local flagValue      = Util.getAttribute(obj, EggDB.FLAG_ATTRS)
-    local nameFromAttr   = Util.getAttribute(obj, EggDB.NAME_ATTRS)
-    local rarityFromAttr = Util.getAttribute(obj, EggDB.RARITY_ATTRS)
-    local islandFromAttr = Util.getAttribute(obj, EggDB.ISLAND_ATTRS)
+    local flagValue      = Util.getAttribute(obj, SaB.EggDB.FLAG_ATTRS)
+    local nameFromAttr   = Util.getAttribute(obj, SaB.EggDB.NAME_ATTRS)
+    local rarityFromAttr = Util.getAttribute(obj, SaB.EggDB.RARITY_ATTRS)
+    local islandFromAttr = Util.getAttribute(obj, SaB.EggDB.ISLAND_ATTRS)
 
     local entryFromAttr = nil
     if type(nameFromAttr) == "string" then
-        entryFromAttr = EggDB.lookup(nameFromAttr)
+        entryFromAttr = SaB.EggDB.lookup(nameFromAttr)
     end
 
     -- ---------------------------------------------------------------
@@ -162,8 +160,8 @@ function Scanner.classifyObject(obj)
     -- rarity / island attributes make the guess much stronger
     local rarityGuessed = nil
     if rarityFromAttr ~= nil then
-        rarityGuessed = Rarity.normalize(tostring(rarityFromAttr))
-            or EggDB.rarityFromText(tostring(rarityFromAttr))
+        rarityGuessed = SaB.Rarity.normalize(tostring(rarityFromAttr))
+            or SaB.EggDB.rarityFromText(tostring(rarityFromAttr))
         if rarityGuessed then
             offer(hasContainer and 72 or 40, "attr")
         end
@@ -185,7 +183,7 @@ function Scanner.classifyObject(obj)
         end
         for _, p in ipairs(prompts) do
             local action = tostring(p.ActionText or "") .. " " .. tostring(p.Name or "")
-            if EggDB.isPromptWord(action) then
+            if SaB.EggDB.isPromptWord(action) then
                 offer(58, "prompt")
                 break
             end
@@ -202,9 +200,9 @@ function Scanner.classifyObject(obj)
 
     -- child values holding a brainrot name (egg_12 -> StringValue "Cerberus")
     if score < 95 and (hasEggWord or hasContainer or userHit) then
-        local v = Util.findValue(obj, EggDB.NAME_ATTRS, 30)
+        local v = Util.findValue(obj, SaB.EggDB.NAME_ATTRS, 30)
         if type(v) == "string" then
-            local e2 = EggDB.lookup(v)
+            local e2 = SaB.EggDB.lookup(v)
             if e2 then
                 entryFromAttr = e2
                 offer(92, "value")
@@ -217,7 +215,7 @@ function Scanner.classifyObject(obj)
     -- ---------------------------------------------------------------
     -- 3) build the record
     -- ---------------------------------------------------------------
-    local info = EggDB.classify(entry and entry.n or (entryFromAttr and entryFromAttr.n) or raw)
+    local info = SaB.EggDB.classify(entry and entry.n or (entryFromAttr and entryFromAttr.n) or raw)
 
     local name
     if entry then
@@ -225,9 +223,9 @@ function Scanner.classifyObject(obj)
     elseif entryFromAttr then
         name = entryFromAttr.n
     elseif type(nameFromAttr) == "string" and #nameFromAttr > 1 then
-        name = EggDB.displayName(nameFromAttr)
+        name = SaB.EggDB.displayName(nameFromAttr)
     else
-        name = EggDB.displayName(raw)
+        name = SaB.EggDB.displayName(raw)
     end
 
     local rarity = "Unknown"
@@ -236,17 +234,17 @@ function Scanner.classifyObject(obj)
     elseif info.known then
         rarity = info.rarity
     else
-        rarity = EggDB.rarityFromText(raw .. " " .. parents) or "Unknown"
+        rarity = SaB.EggDB.rarityFromText(raw .. " " .. parents) or "Unknown"
     end
-    rarity = Rarity.normalize(rarity) or rarity
-    if not Rarity.COLORS[rarity] then rarity = "Unknown" end
+    rarity = SaB.Rarity.normalize(rarity) or rarity
+    if not SaB.Rarity.COLORS[rarity] then rarity = "Unknown" end
 
     local island = nil
     if islandFromAttr ~= nil then
-        island = EggDB.islandFromText(tostring(islandFromAttr))
+        island = SaB.EggDB.islandFromText(tostring(islandFromAttr))
     end
     if not island and info.known then island = info.island end
-    if not island then island = EggDB.islandFromText(parents .. " " .. raw) end
+    if not island then island = SaB.EggDB.islandFromText(parents .. " " .. raw) end
 
     local pos, height = Util.getBounds(obj)
     if not pos then return nil end
@@ -259,7 +257,7 @@ function Scanner.classifyObject(obj)
         raw         = raw,
         name        = name,
         rarity      = rarity,
-        tier        = Rarity.tier(rarity),
+        tier        = SaB.Rarity.tier(rarity),
         island      = island,
         income      = info.income,
         incomeText  = info.incomeText,
@@ -301,11 +299,13 @@ function Scanner.add(obj, fromEvent)
     bump(Scanner.stats.bySource, rec.source)
     bump(Scanner.stats.byRarity, rec.rarity)
     Scanner.stats.newSince = Scanner.stats.newSince + 1
+    -- rare egg? let the UI shout about it (alerts are wired in 09_Extras)
+    pcall(Scanner.onAlert, rec)
     if fromEvent then
         Log.eggs(("NEW egg  %s  [%s]  %s  (%s, %s)"):format(
             rec.name, rec.rarity, rec.island and (rec.island .. " island") or "island ?",
             Util.formatDistance(rec.dist), Scanner.SOURCE_LABEL[rec.source] or rec.source),
-            Rarity.color(rec.rarity))
+            SaB.Rarity.color(rec.rarity))
     end
     return rec
 end
@@ -368,7 +368,7 @@ end
 function Scanner.registerRoot(obj)
     if not obj or Scanner.roots[obj] then return end
     if not (obj:IsA("Folder") or obj:IsA("Model")) then return end
-    if EggDB.isContainerWord(obj.Name) or EggDB.isEggWord(obj.Name) then
+    if SaB.EggDB.isContainerWord(obj.Name) or SaB.EggDB.isEggWord(obj.Name) then
         Scanner.roots[obj] = true
     end
 end
@@ -393,7 +393,7 @@ function Scanner.deepScan(quiet)
     Scanner.budget = Scanner.BUDGET
     local before = Util.tableCount(Scanner.eggs)
 
-    objects = Scanner.walk(Workspace, function(obj)
+    objects = Scanner.walk(SaB.Services.Workspace, function(obj)
         Scanner.registerRoot(obj)
         Scanner.add(obj)
     end, CONFIG.EggScanLimit)
@@ -457,8 +457,8 @@ function Scanner.passesFilter(rec)
     if CONFIG.EggOnlyKnown and not rec.known then return false end
 
     if CONFIG.EggMinRarityIndex > 0 then
-        local minName = Rarity.fromIndex(CONFIG.EggMinRarityIndex)
-        if minName and rec.tier < Rarity.tier(minName) then return false end
+        local minName = SaB.Rarity.fromIndex(CONFIG.EggMinRarityIndex)
+        if minName and rec.tier < SaB.Rarity.tier(minName) then return false end
     end
 
     if CONFIG.EggIslandFilter ~= "Any" and rec.island ~= CONFIG.EggIslandFilter then
@@ -571,6 +571,7 @@ end)
 -- remember every prompt the game shows us: with this we can tell what the
 -- real "pick up" action is called in this place
 Scanner.promptLog = {}
+Scanner.onAlert   = function() end   -- set by 09_Extras / the UI
 SaB.Services.ProximityPromptService.PromptShown:Connect(function(prompt)
     pcall(function()
         local parent = prompt.Parent

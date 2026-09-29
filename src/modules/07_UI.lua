@@ -68,15 +68,16 @@ main.ClipsDescendants = false
 main.Parent = gui
 UI.main = main
 
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(0, 14)
-mainCorner.Parent = main
-
-local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = T.ACC
-mainStroke.Thickness = 1.5
-mainStroke.Transparency = 0.55
-mainStroke.Parent = main
+do
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 14)
+    c.Parent = main
+    local st = Instance.new("UIStroke")
+    st.Color = T.ACC
+    st.Thickness = 1.5
+    st.Transparency = 0.55
+    st.Parent = main
+end
 
 -- ---------- header ----------
 local header = Instance.new("Frame")
@@ -89,9 +90,11 @@ header.Active = true
 header.Parent = main
 UI.header = header
 
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 14)
-headerCorner.Parent = header
+do
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 14)
+    c.Parent = header
+end
 
 -- the bottom corners of the header should only be round when minimised
 local headerFix = Instance.new("Frame")
@@ -607,7 +610,7 @@ function UI.log(parent, height)
         count = 0
     end
 
-    return sf, add, clear
+    return { frame = sf, add = add, clear = clear }
 end
 
 --==============================================================

@@ -143,3 +143,31 @@ ProximityPromptService.PromptShown -> نسجّل كل برومبت نشوفو (�
 5. تاب **Diag** ← **BUILD FULL REPORT** ← **COPY** ← صيفطولي التقرير.
    التقرير فيه: شجرة الـ workspace، كل الأسماء اللي فيها «egg»، المجلدات،
    البرومبتات، الـ remotes، مكان القاعدة، وتحليل الرصد — نحطّو الأسماء الحقيقية ونولّي 100%.
+
+---
+
+## 8. 🆕 v2.2 — التنبيهات والجزر والـ AFK
+
+### 🔔 تنبيه البيضات النادرة
+أول ما بيضة ندرة فوق العتبة اللي ختارتها (الافتراضي: `Secret`) تتلاقى:
+- إشعار Roblox (`SetCore`) — بمعدّل إشعار واحد كل 4 ثوانٍ باش ما يفيضوش،
+- **toast** أسفل الشاشة بلون الندرة،
+- سطر `<== RARE EGG` بالـ Activity log،
+- وسطر دايم بالواجهة: `3 rare egg(s) seen • last: Dragon Cannelloni [Secret]`.
+
+البيضة تتعلّم `alerted = true` → ما يتكرّرش التنبيه لنفس البيضة.
+
+### 🗺️ الجزر
+`Extras.findIslands()` يقلّب مستويين من الـ workspace ويطابق الأسماء مع
+كلمات الجزيرة (`grass/desert/snow/cave/water/lava/heaven/candy...`)،
+يرتبهم من الأسفل للأعلى، ويعطي لكل جزيرة لون + عدد البيضات اللي فيها.
+
+### 🐇 AFK على الترامبولين
+يدوّر على أي أوبجكت اسمو فيه `trampoline / treadmill / jump / train / gym / xp`،
+يمشي ليها (`GO TRAIN`) ثم يشغّل قفز تلقائي كل `AfkJumpInterval` ثانية
+(`Humanoid.Jump = true`) — يعني XP وأنت بعيد.
+
+### 💾 الإعدادات المحفوظة
+- الترميز: سطور `key=type=value` (number/boolean/string/table) — بلا مكتبات خارجية.
+- الملف: `SaBSuite/settings.txt` (يستعمل `writefile/readfile/isfile` حق الـ executor).
+- عند التحميل نقبل غير المفاتيح الموجودة أصلاً وبنفس النوع (أمان).

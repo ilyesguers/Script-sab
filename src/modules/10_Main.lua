@@ -4,14 +4,15 @@
 
 local Util    = SaB.Util
 local CONFIG  = SaB.CONFIG
-local Scanner = SaB.Scanner
-local Farm    = SaB.Farm
-local UI      = SaB.UI
-local T       = SaB.Theme
+
+if CONFIG.AutoLoadSettings then
+    local ok, msg = SaB.Extras.load()
+    Log.info("settings: " .. tostring(msg), ok and SaB.Theme.OK or SaB.Theme.DIM)
+end
 
 Log.info(("SaB Suite v%s loaded - %d known eggs in the database")
-    :format(SaB.VERSION, #SaB.EggDB.EGGS), T.ACC)
-Log.eggs("first scan started (whole map) ...", T.DIM)
+    :format(SaB.VERSION, #SaB.EggDB.EGGS), SaB.Theme.ACC)
+Log.eggs("first scan started (whole map) ...", SaB.Theme.DIM)
 
 Util.notify("SaB Suite", ("v%s loaded - Eggs tab is open"):format(SaB.VERSION), 5)
 
@@ -19,8 +20,8 @@ Util.notify("SaB Suite", ("v%s loaded - Eggs tab is open"):format(SaB.VERSION), 
 SaB.LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
     pcall(function()
-        Farm.Base.cached = nil
-        Farm.Teleport.lastSafe = nil
+        SaB.Farm.Base.cached = nil
+        SaB.Farm.Teleport.lastSafe = nil
     end)
 end)
 
@@ -28,15 +29,15 @@ end)
 task.spawn(function()
     task.wait(20)
     if not SaB.Running then return end
-    local total = Util.tableCount(Scanner.eggs)
+    local total = Util.tableCount(SaB.Scanner.eggs)
     if total == 0 then
-        Log.warn("no eggs found in the first 20s - things to check:", T.WARN)
-        Log.warn("  1) are you inside the LTM? (go through the portal)", T.WARN)
-        Log.warn("  2) press 'DEEP SCAN NOW' in the Eggs tab", T.WARN)
-        Log.warn("  3) open the DIAGNOSTICS tab -> BUILD FULL REPORT and send it", T.WARN)
+        Log.warn("no eggs found in the first 20s - things to check:", SaB.Theme.WARN)
+        Log.warn("  1) are you inside the LTM? (go through the portal)", SaB.Theme.WARN)
+        Log.warn("  2) press 'DEEP SCAN NOW' in the Eggs tab", SaB.Theme.WARN)
+        Log.warn("  3) open the DIAGNOSTICS tab -> BUILD FULL REPORT and send it", SaB.Theme.WARN)
         Util.notify("SaB Suite", "No eggs found yet - see the console / Diag tab", 6)
     else
-        Log.ok(("%d eggs tracked - ESP is drawing labels"):format(total), T.OK)
+        Log.ok(("%d eggs tracked - ESP is drawing labels"):format(total), SaB.Theme.OK)
     end
 end)
 
