@@ -3,7 +3,7 @@
 --==============================================================
 
 local SaB = {
-    VERSION = "2.2.0",
+    VERSION = "2.3.0",
     NAME    = "SaB Suite",
     Running = true,
 }
@@ -65,9 +65,16 @@ SaB.CONFIG = {
     -- ---------- AUTO FARM ----------
     EggAutoFarm        = false,
     EggFarmPriority    = "rarity",   -- rarity | nearest | income
-    EggSafeTeleport    = true,       -- walk there in steps instead of 1 jump
-    EggStepSize        = 60,         -- studs per step
-    EggStepDelay       = 0.10,       -- seconds between steps
+    EggSafeTeleport    = true,       -- fly there instead of 1 jump (anti snap-back)
+    EggStepSize        = 14,         -- studs per fallback step (smooth mode uses speed)
+    EggStepDelay       = 0,          -- 0 = wait one frame between steps
+    EggTpMode          = "smooth",   -- smooth | fast | instant
+    EggTpSpeed         = 80,         -- studs / second (smooth fly)
+    EggTpNoclip        = true,       -- no collision while flying (islands will not fling you)
+    EggTpAntiRubber    = true,       -- if the server snaps you back, put yourself back on the path
+    EggTpHoldArrive    = 0.45,       -- seconds to hold still on arrival so the server accepts the position
+    EggTpArcHeight     = 28,         -- extra height (climb, cross, land) so we do not clip islands
+    EggTpArriveDist    = 10,         -- studs - we only say "arrived" when we ARE this close
     EggPickupDelay     = 0.60,       -- pause on the egg before checking
     EggReturnDelay     = 2.00,       -- pause at the base (hatch time)
     EggPickupTimeout   = 7.0,        -- give up on one egg after this

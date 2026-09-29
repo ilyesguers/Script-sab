@@ -260,6 +260,46 @@ def main():
     check("egg is gone after the pickup",
           ev("function() return SaB.Scanner.getByObj(World_Test.eggB) == nil end")(), True)
 
+    print("\n[6b] teleport (smooth fly actually arrives, no fake success)")
+    check("default tp mode is smooth",
+          ev("function() return SaB.CONFIG.EggTpMode end")(), "smooth")
+    check("noclip on by default",
+          ev("function() return SaB.CONFIG.EggTpNoclip end")(), True)
+    check("anti-rubberband on by default",
+          ev("function() return SaB.CONFIG.EggTpAntiRubber end")(), True)
+    lua.execute("""
+        local dest = Vector3.new(-200, 300, 50)
+        TP_OK = SaB.Farm.Teleport.to(dest)
+        local hrp = SaB.Util.getHRP()
+        TP_X = math.floor(hrp.Position.X + 0.5)
+        TP_Y = math.floor(hrp.Position.Y + 0.5)
+        TP_Z = math.floor(hrp.Position.Z + 0.5)
+        TP_WHY = SaB.Farm.Teleport.lastWhy
+        TP_ARRIVED_HELPER = SaB.Farm.Teleport.arrived(dest, 12)
+        TP_FLYING = SaB.Farm.Teleport.flying
+    """)
+    check("Teleport.to reports success", ev("function() return TP_OK end")(), True)
+    check("Teleport.lastWhy = arrived", ev("function() return TP_WHY end")(), "arrived")
+    check("character X is the destination", ev("function() return TP_X end")(), -200)
+    check("character Y is dest+3 (stand on it)", ev("function() return TP_Y end")(), 303)
+    check("character Z is the destination", ev("function() return TP_Z end")(), 50)
+    check("arrived() agrees we are there", ev("function() return TP_ARRIVED_HELPER end")(), True)
+    check("flying flag is cleared after to()", ev("function() return TP_FLYING end")(), False)
+    check("arrived counter went up",
+          ev("function() return SaB.Farm.Teleport.stats.arrived >= 1 end")(), True)
+
+    # a second hop: follow-style, short distance, still must land on the point
+    lua.execute("""
+        local dest2 = Vector3.new(-180, 310, 60)
+        TP2_OK = SaB.Farm.Teleport.to(dest2)
+        local hrp = SaB.Util.getHRP()
+        TP2_X = math.floor(hrp.Position.X + 0.5)
+        TP2_Z = math.floor(hrp.Position.Z + 0.5)
+    """)
+    check("second hop succeeds", ev("function() return TP2_OK end")(), True)
+    check("second hop X", ev("function() return TP2_X end")(), -180)
+    check("second hop Z", ev("function() return TP2_Z end")(), 60)
+
     # ------------------------- UI -------------------------
     print("\n[7] user interface")
     check("tabs created", ev("function() return #SaB.UI.tabOrder end")(), 4)
