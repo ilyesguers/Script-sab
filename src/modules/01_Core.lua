@@ -3,7 +3,7 @@
 --==============================================================
 
 local SaB = {
-    VERSION = "2.1.0",
+    VERSION = "2.2.0",
     NAME    = "SaB Suite",
     Running = true,
 }
@@ -75,6 +75,18 @@ SaB.CONFIG = {
     EggMaxRetries      = 2,
     EggExperimentalRemotes = false,  -- try firing "collect" remotes (risky)
     EggAnchorWhileWaiting = true,   -- freeze in the air so we do not fall
+
+    -- ---------- ALERTS ----------
+    EggAlertEnabled       = true,
+    EggAlertMinRarityIndex = 7,       -- index in Rarity.ORDER (7 = Secret)
+
+    -- ---------- AFK / XP ----------
+    AfkJump              = false,     -- jump on the trampoline automatically
+    AfkJumpInterval      = 0.60,      -- seconds between jumps
+    AfkTrampolineName    = "",        -- filled by "find trampoline"
+
+    -- ---------- SAVED SETTINGS ----------
+    AutoLoadSettings     = false,     -- load my settings when the script starts
 
     -- ---------- SNIPER ----------
     SniperEnabled        = true,
@@ -571,6 +583,68 @@ function Util.writeFile(name, text)
         ok = pcall(function() writefile(name, tostring(text)) end)
     end
     return ok
+end
+
+-- tiny settings (de)serializer - no JSON library needed inside Roblox
+local SETTINGS_SEP = "\031"
+
+function Util.encodeSettings(cfg)
+    local lines = {}
+    for k, v in pairs(cfg or {}) do
+        local t = type(v)
+        if t == "number" or t == "boolean" then
+            table.insert(lines, ("%s=%s=%s"):format(k, t, tostring(v)))
+        elseif t == "string" then
+            if not v:find("\n") then
+                table.insert(lines, ("%s=string=%s"):format(k, v))
+            end
+        elseif t == "table" then
+            local items = {}
+            local plain = true
+            for _, item in ipairs(v) do
+                if type(item) ~= "string" and type(item) ~= "number" then plain = false break end
+                table.insert(items, tostring(item))
+            end
+            if plain then
+                table.insert(lines, ("%s=table=%s"):format(k, table.concat(items, SETTINGS_SEP)))
+            end
+        end
+    end
+    table.sort(lines)
+    return table.concat(lines, "\n")
+end
+
+function Util.decodeSettings(text)
+    local out = {}
+    for line in tostring(text or ""):gmatch("[^\n]+") do
+        local k, t, v = line:match("^(%w+)=(%w+)=(.*)$")
+        if k and t and v then
+            if t == "number" then
+                out[k] = tonumber(v)
+            elseif t == "boolean" then
+                out[k] = (v == "true")
+            elseif t == "string" then
+                out[k] = v
+            elseif t == "table" then
+                local items = {}
+                for item in v:gmatch("[^" .. SETTINGS_SEP .. "]+") do
+                    table.insert(items, item)
+                end
+                out[k] = items
+            end
+        end
+    end
+    return out
+end
+
+function Util.readSaved(name)
+    if typeof(readfile) ~= "function" then return nil end
+    local ok, data = pcall(function()
+        if typeof(isfile) == "function" and not isfile(name) then return nil end
+        return readfile(name)
+    end)
+    if ok and type(data) == "string" then return data end
+    return nil
 end
 
 function Util.isEmpty(t)

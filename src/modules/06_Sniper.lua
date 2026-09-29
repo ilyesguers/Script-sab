@@ -15,9 +15,6 @@ SaB.Sniper = Sniper
 local CONFIG = SaB.CONFIG
 local Util   = SaB.Util
 
-local TextChatService = SaB.Services.TextChatService
-local Players = SaB.Services.Players
-
 local NUMBER_WORDS = {
     zero = "0", one = "1", two = "2", three = "3", four = "4",
     five = "5", six = "6", seven = "7", eight = "8", nine = "9",
@@ -373,15 +370,15 @@ task.spawn(function()
 end)
 
 -- ---------------- chat hooks ----------------
-if TextChatService then
-    TextChatService.MessageReceived:Connect(function(msg)
+if SaB.Services.TextChatService then
+    SaB.Services.TextChatService.MessageReceived:Connect(function(msg)
         pcall(function()
             local ts = msg.TextSource
             Sniper.handleMessage(msg.Text or "", ts and ts.UserId, ts and ts.Name)
         end)
     end)
     pcall(function()
-        TextChatService.SendingMessage:Connect(function(msg)
+        SaB.Services.TextChatService.SendingMessage:Connect(function(msg)
             local ts = msg.TextSource
             Sniper.handleMessage(msg.Text or "", ts and ts.UserId, ts and ts.Name)
         end)
@@ -395,8 +392,8 @@ local function hookLegacy(p)
         end)
     end)
 end
-for _, p in ipairs(Players:GetPlayers()) do hookLegacy(p) end
-Players.PlayerAdded:Connect(hookLegacy)
+for _, p in ipairs(SaB.Services.Players:GetPlayers()) do hookLegacy(p) end
+SaB.Services.Players.PlayerAdded:Connect(hookLegacy)
 
 -- auto-fill when the code box finally opens
 SaB.PlayerGui.DescendantAdded:Connect(function(d)

@@ -15,11 +15,12 @@ SaB.Farm = Farm
 
 local CONFIG  = SaB.CONFIG
 local Util    = SaB.Util
-local Scanner = SaB.Scanner
-local Rarity  = SaB.Rarity
-local Workspace = SaB.Services.Workspace
 
-Farm.stats = { delivered = 0, failed = 0, cycles = 0, lastEgg = "-", lastWhy = "-" }
+Farm.stats = {
+    delivered = 0, failed = 0, cycles = 0, lastEgg = "-", lastWhy = "-",
+    history = {},          -- { time , name , rarity }
+}
+Farm.onDelivery = function() end
 Farm.busy  = false
 Farm.state = "idle"
 Farm.onStatus = function() end
@@ -172,13 +173,13 @@ function Base.find()
     local uid = SaB.LocalPlayer.UserId
 
     -- 1) a container named after you
-    local direct = Workspace:FindFirstChild(name)
+    local direct = SaB.Services.Workspace:FindFirstChild(name)
     local p = Util.getPos(direct)
     if p then return p, "workspace/" .. name end
 
     -- 2) Bases / Plots folders
     for _, folderName in ipairs({ "Bases", "Base", "Plots", "Plot", "PlotsFolder", "PlayerBases" }) do
-        local folder = Workspace:FindFirstChild(folderName)
+        local folder = SaB.Services.Workspace:FindFirstChild(folderName)
         if folder then
             local mine = folder:FindFirstChild(name) or folder:FindFirstChild(tostring(uid))
             p = Util.getPos(mine)
@@ -188,7 +189,7 @@ function Base.find()
 
     -- 3) anything claiming to be owned by us
     local found, label
-    for _, obj in ipairs(Workspace:GetChildren()) do
+    for _, obj in ipairs(SaB.Services.Workspace:GetChildren()) do
         local attrs = Util.getAttributes(obj)
         local owner = attrs.Owner or attrs.OwnerName or attrs.PlayerName or attrs.Player
         local ownerId = attrs.OwnerId or attrs.OwnerUserId or attrs.UserId
@@ -223,7 +224,7 @@ function Base.find()
         p = Util.getPos(SaB.LocalPlayer.RespawnLocation)
         if p then return p, "RespawnLocation" end
     end
-    local spawn = Workspace:FindFirstChild("SpawnLocation") or Workspace:FindFirstChild("Spawn")
+    local spawn = SaB.Services.Workspace:FindFirstChild("SpawnLocation") or SaB.Services.Workspace:FindFirstChild("Spawn")
     p = Util.getPos(spawn)
     if p then return p, "spawn point" end
 
@@ -455,7 +456,7 @@ function Farm.cycle(rec)
 
     -- ---------- 1) travel ----------
     status(("TRAVEL  ->  %s  [%s]  %s"):format(rec.name, rec.rarity,
-        Util.formatDistance(rec.dist)), Rarity.color(rec.rarity))
+        Util.formatDistance(rec.dist)), SaB.Rarity.color(rec.rarity))
     Teleport.to(rec.pos)
 
     local hrp = Util.getHRP()
@@ -477,7 +478,7 @@ function Farm.cycle(rec)
         Farm.setAnchor(false)
         Farm.stats.failed = Farm.stats.failed + 1
         Farm.stats.lastWhy = "could not grab it"
-        Scanner.markFailed(rec)
+        SaB.Scanner.markFailed(rec)
         status(("FAILED  %s  - nothing worked (egg may need a jump / a key)"):format(rec.name),
             SaB.Theme.BAD)
         return false, "pickup failed"
@@ -510,6 +511,11 @@ function Farm.cycle(rec)
 
     Farm.setAnchor(false)
     Farm.stats.delivered = Farm.stats.delivered + 1
+    table.insert(Farm.stats.history, {
+        time = os.date("%H:%M:%S"), name = rec.name, rarity = rec.rarity,
+    })
+    if #Farm.stats.history > 60 then table.remove(Farm.stats.history, 1) end
+    pcall(Farm.onDelivery, rec)
     status(("DELIVERED  %s   (total %d)"):format(rec.name, Farm.stats.delivered), SaB.Theme.OK)
     Util.notify("Egg farm", ("Delivered: %s [%s]"):format(rec.name, rec.rarity), 3)
     return true, "delivered"
@@ -527,10 +533,10 @@ function Farm.runOnce(rec)
             if not Util.isAlive() then Util.waitForCharacter(10) end
             local target = rec
             if not target or target.obj.Parent == nil then
-                target = Scanner.bestTarget()
+                target = SaB.Scanner.bestTarget()
             end
             if not target then
-                local total = Util.tableCount(Scanner.eggs)
+                local total = Util.tableCount(SaB.Scanner.eggs)
                 status(("no egg matches your filters (detected %d)"):format(total), SaB.Theme.WARN)
                 return
             end
@@ -556,11 +562,11 @@ task.spawn(function()
             pcall(function()
                 if Util.isAlive() then
                     Teleport.rescue()
-                    local target = Scanner.bestTarget()
+                    local target = SaB.Scanner.bestTarget()
                     if target then
                         Farm.cycle(target)
                     else
-                        local total = Util.tableCount(Scanner.eggs)
+                        local total = Util.tableCount(SaB.Scanner.eggs)
                         if total == 0 then
                             status("no eggs detected - press DEEP SCAN (or enter the LTM portal)",
                                 SaB.Theme.WARN)

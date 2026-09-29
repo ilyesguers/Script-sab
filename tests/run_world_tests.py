@@ -290,6 +290,78 @@ def main():
           ev("function() return (SaB.Diag.buildReport():find('=== SaB Suite report ===', 1, true) ~= nil) end")(),
           True)
 
+    # ------------------------- v2.2 extras -------------------------
+    print("\n[8] v2.2 : alerts , islands , AFK , saved settings , history")
+
+    # fake executor file API
+    lua.execute("""
+        STORED = {}
+        writefile = function(name, data) STORED[name] = tostring(data) end
+        readfile = function(name) return STORED[name] end
+        isfile = function(name) return STORED[name] ~= nil end
+        isfolder = function() return true end
+        makefolder = function() end
+    """)
+
+    check("rare egg alert fired", ev("function() return #SaB.Extras.alerts > 0 end")(), True)
+    check("alert is for a Secret egg",
+          ev("function() return SaB.Extras.alerts[1].rarity end")(), "Secret")
+    check("islands found (grass / lava / heavenly)",
+          ev("function() return #SaB.Extras.findIslands(true) end")(), 3)
+    check("islands are sorted low -> high",
+          ev("function() local l = SaB.Extras.findIslands(true) return l[1].key .. '/' .. l[3].key end")(),
+          "Grass/Heavenly")
+    check("eggs counted per island",
+          ev("function() return SaB.Extras.eggCountOn('Lava') end")(), 2)
+
+    check("collected history has the delivered egg",
+          ev("function() return #SaB.Farm.stats.history end")(), 1)
+    check("history entry keeps the egg name",
+          ev("function() return SaB.Farm.stats.history[1].name end")(), "Egg")
+
+    # trampoline + auto jump
+    lua.execute("""
+        local W = game:GetService("Workspace")
+        local tramp = World.new("Part", W, "Trampoline")
+        tramp.Position = Vector3.new(300, 20, 300)
+        World_Test.tramp = tramp
+        local ok, name = SaB.Extras.findTrampoline()
+        TRAMP_NAME = name
+        SaB.Extras.goTrain()
+        SaB.Extras.afkJumpOnce()
+        AFK_JUMPED = SaB.Util.getHumanoid().Jump
+        AFK_ON = SaB.CONFIG.AfkJump
+    """)
+    check("trampoline found by name", ev("function() return TRAMP_NAME end")(), "Trampoline")
+    check("goTrain moves you there",
+          ev("function() return math.floor(SaB.Util.getHRP().Position.x) end")(), 300)
+    check("goTrain turns the auto jump on", ev("function() return AFK_ON end")(), True)
+    check("auto jump presses Jump", ev("function() return AFK_JUMPED end")(), True)
+
+    # saved settings round trip
+    lua.execute("""
+        SaB.CONFIG.EggMaxDistance = 1234
+        SaB.CONFIG.EggWhitelist = {"dragon", "cerberus"}
+        SaB.CONFIG.EggAutoFarm = true
+        SAVE_OK, SAVE_MSG = SaB.Extras.save()
+        SaB.CONFIG.EggMaxDistance = 0
+        SaB.CONFIG.EggWhitelist = {}
+        SaB.CONFIG.EggAutoFarm = false
+        LOAD_OK, LOAD_MSG = SaB.Extras.load()
+    """)
+    check("settings saved", ev("function() return SAVE_OK end")(), True)
+    check("settings loaded back", ev("function() return LOAD_OK end")(), True)
+    check("number restored", ev("function() return SaB.CONFIG.EggMaxDistance end")(), 1234)
+    check("list restored", ev("function() return table.concat(SaB.CONFIG.EggWhitelist, ',') end")(),
+          "dragon,cerberus")
+    check("boolean restored", ev("function() return SaB.CONFIG.EggAutoFarm end")(), True)
+    lua.execute("SaB.CONFIG.EggAutoFarm = false")
+
+    check("sniper is connected to the chat",
+          ev("function() return #SaB.Services.TextChatService.MessageReceived._handlers end")(), 1)
+    check("legacy chat hook is connected too",
+          ev("function() return #SaB.LocalPlayer.Chatted._handlers end")(), 1)
+
     print("\n" + "-" * 50)
     if failures:
         print(f"FAILED  {len(failures)}/{checks + len(failures)} checks")

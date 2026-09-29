@@ -18,8 +18,6 @@ SaB.ESP = ESP
 
 local CONFIG = SaB.CONFIG
 local Util   = SaB.Util
-local Rarity = SaB.Rarity
-local Scanner = SaB.Scanner
 
 ESP.parts   = {}      -- [obj] = { bb, frame, nameLbl, chip, chipLbl, infoLbl, highlight }
 ESP.MAX     = 120     -- safety: never build more than this many labels
@@ -58,7 +56,7 @@ function ESP.build(rec)
     local adornee = adorneeFor(rec)
     if not adornee then return nil end
 
-    local color = Rarity.color(rec.rarity)
+    local color = SaB.Rarity.color(rec.rarity)
     local s = ESP.TEXT_SCALE
 
     local bb = Instance.new("BillboardGui")
@@ -140,7 +138,7 @@ function ESP.build(rec)
     chip.TextColor3 = Color3.fromRGB(10, 10, 14)
     chip.TextXAlignment = Enum.TextXAlignment.Center
     chip.Size = UDim2.new(0, 56 * s, 0, 13 * s)
-    chip.Text = " " .. (Rarity.SHORT[rec.rarity] or "???") .. " "
+    chip.Text = " " .. (SaB.Rarity.SHORT[rec.rarity] or "???") .. " "
     chip.AutomaticSize = Enum.AutomaticSize.X
     chip.Parent = row2
     corner(chip, 6 * s)
@@ -194,9 +192,9 @@ function ESP.addHighlight(rec, part)
         local h = Instance.new("Highlight")
         h.Name = "SaB_EggHighlight"
         h.Adornee = rec.obj
-        h.FillColor = Rarity.color(rec.rarity)
+        h.FillColor = SaB.Rarity.color(rec.rarity)
         h.FillTransparency = 0.72
-        h.OutlineColor = Rarity.color(rec.rarity)
+        h.OutlineColor = SaB.Rarity.color(rec.rarity)
         h.OutlineTransparency = 0
         h.DepthMode = CONFIG.EggAlwaysOnTop
             and Enum.HighlightDepthMode.AlwaysOnTop
@@ -263,7 +261,7 @@ end
 
 function ESP.rebuild()
     ESP.clear()
-    for _, rec in pairs(Scanner.eggs) do
+    for _, rec in pairs(SaB.Scanner.eggs) do
         ESP.attach(rec)
     end
 end
@@ -273,9 +271,9 @@ end
 --==============================================================
 function ESP.update()
     local enabled = CONFIG.EggESPEnabled
-    for obj, rec in pairs(Scanner.eggs) do
+    for obj, rec in pairs(SaB.Scanner.eggs) do
         if obj.Parent == nil then
-            Scanner.eggs[obj] = nil
+            SaB.Scanner.eggs[obj] = nil
             ESP.detach(rec)
         elseif enabled then
             ESP.attach(rec)
@@ -287,7 +285,7 @@ function ESP.update()
     if not enabled then return end
 
     for obj, part in pairs(ESP.parts) do
-        local rec = Scanner.eggs[obj]
+        local rec = SaB.Scanner.eggs[obj]
         if not rec then
             ESP.detachByObj(obj)
         else
@@ -297,11 +295,11 @@ function ESP.update()
                 part.infoLbl.Visible = CONFIG.EggEspIsland
 
                 -- keep the colour in sync (rarity can be learned later)
-                local color = Rarity.color(rec.rarity)
+                local color = SaB.Rarity.color(rec.rarity)
                 part.nameLbl.TextColor3 = color
                 part.stroke.Color = color
                 part.chip.BackgroundColor3 = color
-                part.chip.Text = " " .. (Rarity.SHORT[rec.rarity] or "???") .. " "
+                part.chip.Text = " " .. (SaB.Rarity.SHORT[rec.rarity] or "???") .. " "
 
                 if CONFIG.EggEspIsland then
                     part.infoLbl.Text = (rec.island and (rec.island .. "  ") or "")

@@ -152,6 +152,24 @@ def main():
     check("clamp", ev("function() return SaB.Util.clamp(99, 0, 10) end")(), 10)
     check("prettyName", ev("function() return SaB.Util.prettyName('grass_egg_01') end")(), "Grass Egg 01")
 
+    # ---------- settings (de)serializer ----------
+    print("\n[8] saved settings (encode / decode)")
+    check("encode + decode a number",
+          ev("function() local t = SaB.Util.decodeSettings(SaB.Util.encodeSettings({a=5})) return t.a end")(),
+          5)
+    check("encode + decode a boolean",
+          ev("function() local t = SaB.Util.decodeSettings(SaB.Util.encodeSettings({b=true, c=false})) return tostring(t.b) .. tostring(t.c) end")(),
+          "truefalse")
+    check("encode + decode a string",
+          ev("function() local t = SaB.Util.decodeSettings(SaB.Util.encodeSettings({s='dragon egg'})) return t.s end")(),
+          "dragon egg")
+    check("encode + decode a list",
+          ev("function() local t = SaB.Util.decodeSettings(SaB.Util.encodeSettings({l={'a','b','c'}})) return table.concat(t.l, ',') end")(),
+          "a,b,c")
+    check("the whole config survives a round trip",
+          ev("function() local t = SaB.Util.decodeSettings(SaB.Util.encodeSettings(SaB.CONFIG)) return t.EggMinConfidence end")(),
+          60)
+
     # ---------- summary ----------
     print("\n" + "-" * 50)
     if failures:
