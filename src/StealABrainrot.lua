@@ -1,5 +1,5 @@
 --[[ =====================================================================
-     STEAL A BRAINROT SUITE  v2.2.0   (2026-09-29)
+     STEAL A BRAINROT SUITE  v2.3.0   (2026-09-29)
      ---------------------------------------------------------------------
      GENERATED FILE - do not edit by hand.
      Edit the modules in src/modules/ then run:  python3 tools/build.py
@@ -36,7 +36,7 @@
 --==============================================================
 
 local SaB = {
-    VERSION = "2.2.0",
+    VERSION = "2.3.0",
     NAME    = "SaB Suite",
     Running = true,
 }
@@ -98,9 +98,16 @@ SaB.CONFIG = {
     -- ---------- AUTO FARM ----------
     EggAutoFarm        = false,
     EggFarmPriority    = "rarity",   -- rarity | nearest | income
-    EggSafeTeleport    = true,       -- walk there in steps instead of 1 jump
-    EggStepSize        = 60,         -- studs per step
-    EggStepDelay       = 0.10,       -- seconds between steps
+    EggSafeTeleport    = true,       -- fly there instead of 1 jump (anti snap-back)
+    EggStepSize        = 14,         -- studs per fallback step (smooth mode uses speed)
+    EggStepDelay       = 0,          -- 0 = wait one frame between steps
+    EggTpMode          = "smooth",   -- smooth | fast | instant
+    EggTpSpeed         = 80,         -- studs / second (smooth fly)
+    EggTpNoclip        = true,       -- no collision while flying (islands will not fling you)
+    EggTpAntiRubber    = true,       -- if the server snaps you back, put yourself back on the path
+    EggTpHoldArrive    = 0.45,       -- seconds to hold still on arrival so the server accepts the position
+    EggTpArcHeight     = 28,         -- extra height (climb, cross, land) so we do not clip islands
+    EggTpArriveDist    = 10,         -- studs - we only say "arrived" when we ARE this close
     EggPickupDelay     = 0.60,       -- pause on the egg before checking
     EggReturnDelay     = 2.00,       -- pause at the base (hatch time)
     EggPickupTimeout   = 7.0,        -- give up on one egg after this
@@ -2019,15 +2026,50 @@ end
 
 --==============================================================
 --  TELEPORT
+--
+--  Why you were snapping back to spawn (the bug you reported):
+--    1. 60-stud CFrame jumps (~600 studs/s). The server anti-cheat
+--       rejects that and rubberbands you to the last VALID position
+--       (your start). Client already showed you flying, then - pop.
+--    2. Instant jump whenever the egg was < 80 studs away. Same thing.
+--    3. Gravity between steps + no noclip → you fall / get flung /
+--       die → respawn at the start, and the pickup never happens
+--       because the SERVER still thinks you are at spawn.
+--    4. "I arrived" was a lie: it never checked the real position.
+--
+--  This version (v2.3):
+--    • speed-capped fly (default 80 studs/s) so the server accepts it
+--    • noclip + PlatformStand so islands / gravity cannot fling you
+--    • anti-rubberband: the PATH is the source of truth. If the server
+--      snaps you, we put you back on the path (we do NOT follow the snap)
+--    • hold still on arrival until the server actually has you there
+--    • only returns true when you ARE within EggTpArriveDist of the target
 --==============================================================
 local Teleport = {}
 Farm.Teleport = Teleport
 Teleport.cancelFlag = false
 Teleport.lastSafe = nil
+Teleport.origin = nil
+Teleport.flying = false
+Teleport.progress = 0
+Teleport.lastWhy = "idle"
+Teleport.gen = 0
+Teleport.stats = { flights = 0, arrived = 0, snapped = 0, failed = 0 }
+Teleport.onProgress = function(pct, left)
+    pcall(Farm.onStatus,
+        ("FLYING  %d%%  %s left"):format(pct, Util.formatDistance(left)),
+        SaB.Theme.ACC)
+end
+
+function Teleport.isSim()
+    return _G.World ~= nil
+end
 
 function Teleport.cancel()
     Teleport.cancelFlag = true
+    Teleport.gen = (Teleport.gen or 0) + 1
     Farm.setAnchor(false)      -- never leave the player frozen in the air
+    Teleport.cleanupFlight()
 end
 
 -- freeze / unfreeze the character while we wait for the game to react
@@ -2038,81 +2080,414 @@ function Farm.setAnchor(state)
     pcall(function() hrp.Anchored = state and true or false end)
 end
 
-local function setCFrame(pos)
-    local hrp = Util.getHRP()
-    if not hrp then return false end
+local collideSaved = {}
+local humSaved = nil
+local holdConn = nil
+
+local function zeroVel(hrp)
+    if not hrp then return end
     pcall(function()
-        hrp.CFrame = CFrame.new(pos)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
     end)
-    if hrp.Position.Y > -150 then
-        Teleport.lastSafe = hrp.Position
+end
+
+local function pulseNoclip()
+    if not CONFIG.EggTpNoclip then return end
+    local char = Util.getChar()
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if collideSaved[p] == nil then
+                local ok, v = pcall(function() return p.CanCollide end)
+                collideSaved[p] = (ok and v) or false
+            end
+            pcall(function() p.CanCollide = false end)
+        end
     end
+end
+
+local function restoreNoclip()
+    for p, v in pairs(collideSaved) do
+        pcall(function()
+            if p and p.Parent then p.CanCollide = v end
+        end)
+    end
+    collideSaved = {}
+end
+
+local function prepareHumanoid()
+    local hum = Util.getHumanoid()
+    if not hum then return end
+    if not humSaved then
+        humSaved = {
+            PlatformStand = hum.PlatformStand,
+            AutoRotate = hum.AutoRotate,
+            Sit = hum.Sit,
+        }
+    end
+    pcall(function()
+        hum.Sit = false
+        hum.PlatformStand = true
+        hum.AutoRotate = false
+        if hum.ChangeState then
+            hum:ChangeState(Enum.HumanoidStateType.Physics)
+        end
+    end)
+end
+
+local function restoreHumanoid()
+    local hum = Util.getHumanoid()
+    local saved = humSaved
+    humSaved = nil
+    if not hum or not saved then return end
+    pcall(function()
+        hum.PlatformStand = saved.PlatformStand and true or false
+        hum.AutoRotate = (saved.AutoRotate ~= false)
+        if hum.ChangeState then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+end
+
+function Teleport.cleanupFlight()
+    Teleport.flying = false
+    if holdConn then
+        pcall(function() holdConn:Disconnect() end)
+        holdConn = nil
+    end
+    restoreNoclip()
+    restoreHumanoid()
+    local hrp = Util.getHRP()
+    zeroVel(hrp)
+end
+
+-- put the whole character on `pos` (PivotTo when we can, else HRP)
+local function applyPos(pos, lookAt)
+    local hrp = Util.getHRP()
+    if not hrp or not pos then return false end
+    local cf
+    if lookAt then
+        local flat = Vector3.new(lookAt.X - pos.X, 0, lookAt.Z - pos.Z)
+        if flat.Magnitude > 1 then
+            cf = CFrame.new(pos, pos + flat)
+        end
+    end
+    cf = cf or CFrame.new(pos)
+    local applied = false
+    pcall(function()
+        local char = Util.getChar()
+        if char and char.PivotTo then
+            char:PivotTo(cf)
+            applied = true
+        end
+    end)
+    if not applied then
+        pcall(function()
+            hrp.CFrame = cf
+        end)
+    end
+    zeroVel(hrp)
     return true
 end
 
--- move in small jumps: climb first, then cross, then land
-function Teleport.stepTo(target)
+-- kept so older call sites / tests that poke at the mover still work
+local function setCFrame(pos)
+    return applyPos(pos)
+end
+
+function Teleport.arrived(pos, limit)
+    local hrp = Util.getHRP()
+    if not hrp or not pos then return false end
+    local dest = Vector3.new(pos.X, pos.Y + 3, pos.Z)
+    return (hrp.Position - dest).Magnitude <= (limit or CONFIG.EggTpArriveDist or 10)
+end
+
+local function destOf(target)
+    return Vector3.new(target.X, target.Y + 3, target.Z)
+end
+
+local function liveTarget(target, follow)
+    if follow then
+        local ok, parent = pcall(function() return follow.Parent end)
+        if ok and parent then
+            local p = Util.getPos(follow)
+            if p then return p end
+        end
+    end
+    return target
+end
+
+local function modeName()
+    if not CONFIG.EggSafeTeleport then return "instant" end
+    local m = CONFIG.EggTpMode or "smooth"
+    if m == "fast" or m == "instant" or m == "smooth" then return m end
+    return "smooth"
+end
+
+function Teleport.modeSpeed()
+    local mode = modeName()
+    if mode == "instant" then return nil end
+    local base = tonumber(CONFIG.EggTpSpeed) or 80
+    if mode == "fast" then return math.max(120, base) end
+    return math.max(22, base)
+end
+
+-- climb first, cross high, then land - never walk through an island
+local function waypoints(from, dest)
+    local arc = tonumber(CONFIG.EggTpArcHeight) or 0
+    local points = {}
+    local flat = Vector3.new(dest.X - from.X, 0, dest.Z - from.Z)
+    local dy = dest.Y - from.Y
+    if arc > 0 and (flat.Magnitude > 18 or math.abs(dy) > 18) then
+        local cruiseY = math.max(from.Y, dest.Y) + arc
+        table.insert(points, Vector3.new(from.X, cruiseY, from.Z))
+        table.insert(points, Vector3.new(dest.X, cruiseY, dest.Z))
+    elseif math.abs(dy) > 40 then
+        table.insert(points, Vector3.new(from.X, dest.Y, from.Z))
+    end
+    table.insert(points, dest)
+    return points
+end
+
+local function startHoldLoop(getIntended)
+    if Teleport.isSim() then return end
+    if holdConn then
+        pcall(function() holdConn:Disconnect() end)
+        holdConn = nil
+    end
+    pcall(function()
+        holdConn = SaB.Services.RunService.Heartbeat:Connect(function()
+            if not Teleport.flying then return end
+            pulseNoclip()
+            local hrp = Util.getHRP()
+            if not hrp then return end
+            zeroVel(hrp)
+            if not CONFIG.EggTpAntiRubber then return end
+            local intended = getIntended()
+            if intended and (hrp.Position - intended).Magnitude > 8 then
+                Teleport.stats.snapped = Teleport.stats.snapped + 1
+                applyPos(intended)
+            end
+        end)
+    end)
+end
+
+local function holdAt(pos, seconds)
+    seconds = tonumber(seconds) or 0
+    if seconds <= 0 or Teleport.isSim() then
+        applyPos(pos)
+        return
+    end
+    local t0 = tick()
+    while (tick() - t0) < seconds do
+        if Teleport.cancelFlag then return end
+        applyPos(pos)
+        pulseNoclip()
+        zeroVel(Util.getHRP())
+        task.wait()
+    end
+end
+
+-- fly along the path. `intended` is the source of truth (NOT hrp.Position)
+-- so a server snap cannot drag us back to spawn.
+function Teleport.stepTo(target, follow)
     local hrp = Util.getHRP()
     if not hrp or not target then return false end
+    local myGen = Teleport.gen
 
-    local step = math.max(20, CONFIG.EggStepSize)
-    local delay = CONFIG.EggStepDelay
-    local from = hrp.Position
+    local speed = Teleport.modeSpeed() or 80
+    local arrive = tonumber(CONFIG.EggTpArriveDist) or 10
+    local intended = hrp.Position
+    local rubberWarned = false
+    local lastUi = -10
 
-    -- 1) vertical (is islands are very high / very low)
-    local dy = target.Y + 3 - from.Y
-    if math.abs(dy) > 45 then
-        local dir = dy > 0 and 1 or -1
-        local climbed = 0
-        while climbed < math.abs(dy) do
-            if Teleport.cancelFlag then return false end
+    local function currentDest()
+        return destOf(liveTarget(target, follow))
+    end
+
+    startHoldLoop(function() return intended end)
+
+    local function tickToward(dest, dt)
+        local hrp2 = Util.getHRP()
+        if not hrp2 then return false, "dead" end
+        if CONFIG.EggTpAntiRubber then
+            local drift = (hrp2.Position - intended).Magnitude
+            if drift > 10 then
+                Teleport.stats.snapped = Teleport.stats.snapped + 1
+                if not rubberWarned then
+                    rubberWarned = true
+                    Log.warn("server tried to snap you back - staying on the path")
+                end
+                applyPos(intended)
+                speed = math.max(22, speed * 0.88)
+            end
+        end
+        local delta = dest - intended
+        local dist = delta.Magnitude
+        local step = math.max(0.5, speed * dt)
+        if dist <= math.max(step, arrive) then
+            intended = dest
+            applyPos(intended)
+            return true
+        end
+        intended = intended + (delta.Unit * step)
+        applyPos(intended, dest)
+        pulseNoclip()
+        return false
+    end
+
+    local dest = currentDest()
+    local path = waypoints(intended, dest)
+    local total = math.max(1, (hrp.Position - dest).Magnitude)
+    local deadline = tick() + math.max(8, total / math.max(18, speed) + 8)
+    local hops = 0
+
+    for i, wp in ipairs(path) do
+        while true do
+            hops = hops + 1
+            if hops > 25000 then
+                Teleport.lastWhy = "timeout"
+                return false
+            end
+            if Teleport.cancelFlag or Teleport.gen ~= myGen then return false end
             if not Util.isAlive() then return false end
+            dest = currentDest()
+            -- last waypoint tracks a moving egg
+            if i == #path then wp = dest end
+            local now = tick()
+            if now > deadline then
+                Teleport.lastWhy = "timeout"
+                return false
+            end
             local hrp2 = Util.getHRP()
             if not hrp2 then return false end
-            local move = math.min(step, math.abs(dy) - climbed)
-            setCFrame(hrp2.Position + Vector3.new(0, dir * move, 0))
-            climbed = climbed + move
-            task.wait(delay)
+            if hrp2.Position.Y < -120 then
+                applyPos(intended)
+                if hrp2.Position.Y < -120 then
+                    Teleport.rescue()
+                    Teleport.lastWhy = "void"
+                    return false
+                end
+            end
+
+            local dt
+            if Teleport.isSim() then
+                dt = 1 / 20
+            else
+                local t0 = tick()
+                task.wait(CONFIG.EggStepDelay or 0)
+                dt = tick() - t0
+                if dt <= 0 or dt > 0.25 then dt = 1 / 60 end
+            end
+
+            local reached = tickToward(wp, dt)
+            local left = (dest - intended).Magnitude
+            local pct = Util.clamp(Util.round((1 - left / total) * 100), 0, 99)
+            Teleport.progress = pct
+            if pct - lastUi >= 15 then
+                lastUi = pct
+                pcall(Teleport.onProgress, pct, left)
+            end
+            if reached then break end
         end
     end
 
-    -- 2) horizontal
-    while true do
-        if Teleport.cancelFlag then return false end
-        if not Util.isAlive() then return false end
-        local hrp2 = Util.getHRP()
-        if not hrp2 then return false end
-        local flat = Vector3.new(target.X - hrp2.Position.X, 0, target.Z - hrp2.Position.Z)
-        local len = flat.Magnitude
-        if len <= step then
-            setCFrame(Vector3.new(target.X, hrp2.Position.Y, target.Z))
-            break
-        end
-        setCFrame(hrp2.Position + (flat.Unit * step))
-        task.wait(delay)
-    end
+    dest = currentDest()
+    intended = dest
+    applyPos(dest)
+    holdAt(dest, CONFIG.EggTpHoldArrive)
 
-    -- 3) settle on the egg
-    setCFrame(Vector3.new(target.X, target.Y + 3, target.Z))
-    task.wait(0.12)
-    return true
-end
-
-function Teleport.to(target)
-    if Teleport.cancelFlag then Teleport.cancelFlag = false end
-    Farm.setAnchor(false)
-    local hrp = Util.getHRP()
-    if not hrp or not target then return false end
-
-    local dist = (hrp.Position - target).Magnitude
-    if not CONFIG.EggSafeTeleport or dist <= 80 then
-        setCFrame(target + Vector3.new(0, 3, 0))
-        task.wait(0.15)
+    hrp = Util.getHRP()
+    if hrp and (hrp.Position - dest).Magnitude <= math.max(arrive, 18) then
         return true
     end
-    return Teleport.stepTo(target)
+    -- one last shove
+    applyPos(dest)
+    hrp = Util.getHRP()
+    return hrp ~= nil and (hrp.Position - dest).Magnitude <= 25
+end
+
+function Teleport.to(target, follow)
+    Teleport.gen = (Teleport.gen or 0) + 1
+    local myGen = Teleport.gen
+    Teleport.cancelFlag = false
+    Farm.setAnchor(false)
+
+    local hrp = Util.getHRP()
+    if not hrp or not target then
+        Teleport.lastWhy = "no character"
+        return false
+    end
+
+    Teleport.stats.flights = Teleport.stats.flights + 1
+    Teleport.origin = hrp.Position
+    if hrp.Position.Y > -50 then
+        Teleport.lastSafe = hrp.Position
+    end
+    Teleport.flying = true
+    Teleport.progress = 0
+    Teleport.lastWhy = "flying"
+    prepareHumanoid()
+    pulseNoclip()
+
+    local dist = (hrp.Position - target).Magnitude
+    local ok = false
+    local mode = modeName()
+
+    local flown, err = pcall(function()
+        if mode == "instant" then
+            local dest = destOf(liveTarget(target, follow))
+            applyPos(dest)
+            holdAt(dest, math.min(0.20, CONFIG.EggTpHoldArrive or 0))
+            return Teleport.arrived(liveTarget(target, follow), 25)
+        end
+        -- even short hops go through the flyer: an 80-stud instant
+        -- jump is exactly what the anti-cheat rubberbands
+        if dist <= (CONFIG.EggTpArriveDist or 10) + 2 then
+            local dest = destOf(target)
+            applyPos(dest)
+            holdAt(dest, CONFIG.EggTpHoldArrive)
+            return true
+        end
+        return Teleport.stepTo(target, follow)
+    end)
+
+    if myGen == Teleport.gen then
+        Teleport.cleanupFlight()
+    end
+
+    if myGen ~= Teleport.gen then
+        Teleport.lastWhy = "superseded"
+        return false
+    end
+    if Teleport.cancelFlag then
+        Teleport.lastWhy = "cancelled"
+        Teleport.stats.failed = Teleport.stats.failed + 1
+        return false
+    end
+    if not flown then
+        Teleport.lastWhy = "error"
+        Teleport.stats.failed = Teleport.stats.failed + 1
+        Log.warn("teleport error: " .. tostring(err))
+        return false
+    end
+    ok = err and true or false
+    if ok then
+        Teleport.lastWhy = "arrived"
+        Teleport.progress = 100
+        Teleport.stats.arrived = Teleport.stats.arrived + 1
+        local here = Util.getHRP()
+        if here and here.Position.Y > -50 then
+            Teleport.lastSafe = here.Position
+        end
+    else
+        Teleport.lastWhy = Teleport.lastWhy ~= "flying" and Teleport.lastWhy or "did not arrive"
+        Teleport.stats.failed = Teleport.stats.failed + 1
+    end
+    return ok
 end
 
 -- anti void: if we somehow fall out of the map, hop back
@@ -2126,7 +2501,7 @@ function Teleport.rescue()
         back = base and base.pos
     end
     if back then
-        setCFrame(back + Vector3.new(0, 8, 0))
+        applyPos(back + Vector3.new(0, 8, 0))
         Log.warn("fell out of the map - hopped back")
         return true
     end
@@ -2329,7 +2704,7 @@ local function tryClick(rec)
 end
 
 local function tryTouch(rec)
-    Teleport.to(rec.pos)
+    Teleport.to(rec.pos, rec.obj)
     task.wait(CONFIG.EggPickupDelay)
     return false   -- the game has to react, we only check afterwards
 end
@@ -2373,7 +2748,7 @@ function Pickup.attempt(rec)
     -- get close first
     local hrp = Util.getHRP()
     if hrp and (hrp.Position - rec.pos).Magnitude > 25 then
-        Teleport.to(rec.pos)
+        Teleport.to(rec.pos, rec.obj)
     end
 
     local attempts = 0
@@ -2439,15 +2814,23 @@ function Farm.cycle(rec)
     -- ---------- 1) travel ----------
     status(("TRAVEL  ->  %s  [%s]  %s"):format(rec.name, rec.rarity,
         Util.formatDistance(rec.dist)), SaB.Rarity.color(rec.rarity))
-    Teleport.to(rec.pos)
+    local reached = Teleport.to(rec.pos, rec.obj)
 
     local hrp = Util.getHRP()
     if hrp then
         local d = (hrp.Position - rec.pos).Magnitude
-        if d > 60 then
-            Teleport.to(rec.pos)
-            task.wait(0.3)
+        if (not reached) or d > 25 then
+            reached = Teleport.to(rec.pos, rec.obj)
+            task.wait(0.2)
         end
+    end
+
+    if not reached and not Teleport.arrived(rec.pos, 25) then
+        Farm.stats.failed = Farm.stats.failed + 1
+        Farm.stats.lastWhy = "travel failed (snapped back)"
+        status(("TRAVEL FAILED  %s  - snapped back / did not arrive"):format(rec.name),
+            SaB.Theme.BAD)
+        return false, "travel failed"
     end
 
     -- ---------- 2) pick up ----------
@@ -3928,7 +4311,7 @@ local function makeRow(index)
         if rec and rec.obj and rec.obj.Parent then
             W.UI.toastShow("teleporting to " .. rec.name, W.Rarity.color(rec.rarity), 2)
             task.spawn(function()
-                W.Farm.Teleport.to(rec.pos)
+                W.Farm.Teleport.to(rec.pos, rec.obj)
             end)
         end
     end)
@@ -3981,7 +4364,7 @@ W.UI.cycle(W.farmSection, "Pick order",
     { "best rarity first", "nearest first", "best income first" }, 1, function(i)
         W.CONFIG.EggFarmPriority = ({ "rarity", "nearest", "income" })[i]
     end)
-W.UI.toggle(W.farmSection, "Safe step teleport (anti void)", W.CONFIG.EggSafeTeleport, function(v)
+W.UI.toggle(W.farmSection, "Safe fly teleport (anti snap-back)", W.CONFIG.EggSafeTeleport, function(v)
     W.CONFIG.EggSafeTeleport = v
 end)
 W.UI.toggle(W.farmSection, "Freeze in place while grabbing", W.CONFIG.EggAnchorWhileWaiting,
@@ -4047,6 +4430,37 @@ do
         if n then W.CONFIG.EggReturnDelay = W.Util.clamp(n, 0.5, 15) end
     end)
 end
+
+-- ---------------- TELEPORT ----------------
+W.tpSection = W.UI.section(W.eggPage, "Teleport (anti snap-back)",
+    Color3.fromRGB(180, 140, 255))
+W.tpLine = W.UI.label(W.tpSection,
+    "tp: idle  •  if you pop back to spawn the server rejected a jump - use SMOOTH",
+    SaB.Theme.DIM, { size = 10 })
+W.UI.cycle(W.tpSection, "Mode",
+    { "smooth (anti-cheat)", "fast", "instant (old, snaps back)" }, 1, function(i)
+        W.CONFIG.EggTpMode = ({ "smooth", "fast", "instant" })[i]
+        W.UI.toastShow("teleport: " .. W.CONFIG.EggTpMode, SaB.Theme.ACC, 2)
+    end)
+W.UI.cycle(W.tpSection, "Fly speed",
+    { "slow 50", "normal 80", "quick 120", "turbo 180" }, 2, function(i)
+        W.CONFIG.EggTpSpeed = ({ 50, 80, 120, 180 })[i]
+        W.UI.toastShow("fly speed: " .. tostring(W.CONFIG.EggTpSpeed) .. " studs/s", SaB.Theme.ACC, 2)
+    end)
+W.UI.toggle(W.tpSection, "Noclip while flying", W.CONFIG.EggTpNoclip, function(v)
+    W.CONFIG.EggTpNoclip = v
+end)
+W.UI.toggle(W.tpSection, "Fight snap-back (anti rubberband)", W.CONFIG.EggTpAntiRubber, function(v)
+    W.CONFIG.EggTpAntiRubber = v
+end)
+W.UI.toggle(W.tpSection, "Hold still on arrival (server must see you)",
+    (tonumber(W.CONFIG.EggTpHoldArrive) or 0) > 0, function(v)
+        W.CONFIG.EggTpHoldArrive = v and 0.45 or 0
+    end)
+W.UI.toggle(W.tpSection, "Sky arc (climb, then cross, then land)",
+    (tonumber(W.CONFIG.EggTpArcHeight) or 0) > 0, function(v)
+        W.CONFIG.EggTpArcHeight = v and 28 or 0
+    end)
 
 -- ---------------- ISLANDS ----------------
 W.islandSection = W.UI.section(W.eggPage, "Islands (tap to fly there)",
@@ -4252,6 +4666,21 @@ function W.Pages.refreshEggs()
     W.baseLine.TextColor3 = base and SaB.Theme.DIM or SaB.Theme.BAD
     W.farmStatsLine.Text = ("delivered %d   •   failed %d   •   last: %s   •   grab method: %s"):format(
         W.Farm.stats.delivered, W.Farm.stats.failed, W.Farm.stats.lastEgg, W.Farm.Pickup.lastMethod)
+
+    if W.tpLine then
+        local tp = W.Farm.Teleport
+        local st = tp.stats or {}
+        if tp.flying then
+            W.tpLine.Text = ("tp: FLYING  %d%%  •  mode %s  •  %d studs/s"):format(
+                tp.progress or 0, tostring(W.CONFIG.EggTpMode), tonumber(W.CONFIG.EggTpSpeed) or 0)
+            W.tpLine.TextColor3 = SaB.Theme.ACC
+        else
+            W.tpLine.Text = ("tp: %s  •  flights %d  arrived %d  snaps fought %d"):format(
+                tostring(tp.lastWhy or "idle"), st.flights or 0, st.arrived or 0, st.snapped or 0)
+            W.tpLine.TextColor3 = (tp.lastWhy == "arrived") and SaB.Theme.OK
+                or ((tp.lastWhy == "idle") and SaB.Theme.DIM or SaB.Theme.WARN)
+        end
+    end
 
     if total ~= W.lastCounts.total then
         W.lastCounts.total = total
@@ -5001,4 +5430,4 @@ end)
 
 
 --[[ ===================== end of build ===================== ]]
-print(("[SaB Suite] v2.2.0 loaded - Eggs tab is the main tab."):format(SaB.VERSION))
+print(("[SaB Suite] v2.3.0 loaded - Eggs tab is the main tab."):format(SaB.VERSION))

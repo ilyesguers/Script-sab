@@ -247,7 +247,7 @@ local function makeRow(index)
         if rec and rec.obj and rec.obj.Parent then
             W.UI.toastShow("teleporting to " .. rec.name, W.Rarity.color(rec.rarity), 2)
             task.spawn(function()
-                W.Farm.Teleport.to(rec.pos)
+                W.Farm.Teleport.to(rec.pos, rec.obj)
             end)
         end
     end)
@@ -300,7 +300,7 @@ W.UI.cycle(W.farmSection, "Pick order",
     { "best rarity first", "nearest first", "best income first" }, 1, function(i)
         W.CONFIG.EggFarmPriority = ({ "rarity", "nearest", "income" })[i]
     end)
-W.UI.toggle(W.farmSection, "Safe step teleport (anti void)", W.CONFIG.EggSafeTeleport, function(v)
+W.UI.toggle(W.farmSection, "Safe fly teleport (anti snap-back)", W.CONFIG.EggSafeTeleport, function(v)
     W.CONFIG.EggSafeTeleport = v
 end)
 W.UI.toggle(W.farmSection, "Freeze in place while grabbing", W.CONFIG.EggAnchorWhileWaiting,
@@ -366,6 +366,37 @@ do
         if n then W.CONFIG.EggReturnDelay = W.Util.clamp(n, 0.5, 15) end
     end)
 end
+
+-- ---------------- TELEPORT ----------------
+W.tpSection = W.UI.section(W.eggPage, "Teleport (anti snap-back)",
+    Color3.fromRGB(180, 140, 255))
+W.tpLine = W.UI.label(W.tpSection,
+    "tp: idle  •  if you pop back to spawn the server rejected a jump - use SMOOTH",
+    SaB.Theme.DIM, { size = 10 })
+W.UI.cycle(W.tpSection, "Mode",
+    { "smooth (anti-cheat)", "fast", "instant (old, snaps back)" }, 1, function(i)
+        W.CONFIG.EggTpMode = ({ "smooth", "fast", "instant" })[i]
+        W.UI.toastShow("teleport: " .. W.CONFIG.EggTpMode, SaB.Theme.ACC, 2)
+    end)
+W.UI.cycle(W.tpSection, "Fly speed",
+    { "slow 50", "normal 80", "quick 120", "turbo 180" }, 2, function(i)
+        W.CONFIG.EggTpSpeed = ({ 50, 80, 120, 180 })[i]
+        W.UI.toastShow("fly speed: " .. tostring(W.CONFIG.EggTpSpeed) .. " studs/s", SaB.Theme.ACC, 2)
+    end)
+W.UI.toggle(W.tpSection, "Noclip while flying", W.CONFIG.EggTpNoclip, function(v)
+    W.CONFIG.EggTpNoclip = v
+end)
+W.UI.toggle(W.tpSection, "Fight snap-back (anti rubberband)", W.CONFIG.EggTpAntiRubber, function(v)
+    W.CONFIG.EggTpAntiRubber = v
+end)
+W.UI.toggle(W.tpSection, "Hold still on arrival (server must see you)",
+    (tonumber(W.CONFIG.EggTpHoldArrive) or 0) > 0, function(v)
+        W.CONFIG.EggTpHoldArrive = v and 0.45 or 0
+    end)
+W.UI.toggle(W.tpSection, "Sky arc (climb, then cross, then land)",
+    (tonumber(W.CONFIG.EggTpArcHeight) or 0) > 0, function(v)
+        W.CONFIG.EggTpArcHeight = v and 28 or 0
+    end)
 
 -- ---------------- ISLANDS ----------------
 W.islandSection = W.UI.section(W.eggPage, "Islands (tap to fly there)",
@@ -571,6 +602,21 @@ function W.Pages.refreshEggs()
     W.baseLine.TextColor3 = base and SaB.Theme.DIM or SaB.Theme.BAD
     W.farmStatsLine.Text = ("delivered %d   •   failed %d   •   last: %s   •   grab method: %s"):format(
         W.Farm.stats.delivered, W.Farm.stats.failed, W.Farm.stats.lastEgg, W.Farm.Pickup.lastMethod)
+
+    if W.tpLine then
+        local tp = W.Farm.Teleport
+        local st = tp.stats or {}
+        if tp.flying then
+            W.tpLine.Text = ("tp: FLYING  %d%%  •  mode %s  •  %d studs/s"):format(
+                tp.progress or 0, tostring(W.CONFIG.EggTpMode), tonumber(W.CONFIG.EggTpSpeed) or 0)
+            W.tpLine.TextColor3 = SaB.Theme.ACC
+        else
+            W.tpLine.Text = ("tp: %s  •  flights %d  arrived %d  snaps fought %d"):format(
+                tostring(tp.lastWhy or "idle"), st.flights or 0, st.arrived or 0, st.snapped or 0)
+            W.tpLine.TextColor3 = (tp.lastWhy == "arrived") and SaB.Theme.OK
+                or ((tp.lastWhy == "idle") and SaB.Theme.DIM or SaB.Theme.WARN)
+        end
+    end
 
     if total ~= W.lastCounts.total then
         W.lastCounts.total = total
